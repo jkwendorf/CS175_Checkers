@@ -15,7 +15,6 @@ separated in the code.
 #include <string.h>
 #include <time.h>
 #include <windows.h>
-/*----------> definitions */
 #define OCCUPIED 0
 #define WHITE 1
 #define BLACK 2
@@ -23,7 +22,7 @@ separated in the code.
 #define KING 8
 #define FREE 16
 #define CHANGECOLOR 3
-#define MAXDEPTH 99
+#define MAXDEPTH 10
 #define MAXMOVES 28
 
 /*----------> compile options  */
@@ -67,10 +66,12 @@ functions help, options and about are optional. if you
 do not provide them, CheckerBoard will display a
 MessageBox stating that this option is in fact not an option*/
 
-
+int comparisons;
+clock_t start;
+int passedCurrentTime(double maxTime);
 
 /* required functions */
-int  	WINAPI getmove(int b[8][8], int color, double maxtime, char str[255], int *playnow, int info, int unused, struct CBmove *move);
+int  WINAPI getmove(int b[8][8], int color, double maxtime, char str[255], int *playnow, int info, int unused, struct CBmove *move);
 
 /*----------> part II: search */
 int  checkers(int b[46], int color, double maxtime, char *str);
@@ -82,6 +83,12 @@ int iterativeDeepening(int b[46], int color, double maxtime, clock_t start, char
 /*----------> part III: move generation */
 
 int  generatemovelist(int b[46], struct move2 movelist[MAXMOVES], int color);
+int  generatecapturelist(int b[46], struct move2 movelist[MAXMOVES], int color);
+void blackmancapture(int b[46], int *n, struct move2 movelist[MAXMOVES], int square);
+void blackkingcapture(int b[46], int *n, struct move2 movelist[MAXMOVES], int square);
+void whitemancapture(int b[46], int *n, struct move2 movelist[MAXMOVES], int square);
+void whitekingcapture(int b[46], int *n, struct move2 movelist[MAXMOVES], int square);
+int  testcapture(int b[46], int color);
 
 /*********** Heuristics */
 
@@ -189,13 +196,11 @@ int WINAPI enginecommand(char str[256], char reply[256])
 	return 0;
 }
 
-
-
 int WINAPI getmove(int b[8][8], int color, double maxtime, char str[255], int *playnow, int info, int unused, struct CBmove *move)
 {
 	int i, value;
 	int board[46];
-
+	comparisons = 0;
 	// Initialize the board
 	for (i = 0; i < 46; i++)
 		board[i] = OCCUPIED;
@@ -255,13 +260,11 @@ int WINAPI getmove(int b[8][8], int color, double maxtime, char str[255], int *p
 	return UNKNOWN;
 }
 
-
 /*-------------- PART II: SEARCH ---------------------------------------------*/
 
 
 int  checkers(int b[46], int color, double maxtime, char *str)
 {
-	clock_t start;
 	int eval, numOfMoves;
 
 	start = clock();
@@ -272,18 +275,24 @@ int  checkers(int b[46], int color, double maxtime, char *str)
 
 int masterIterativeDeepening(int b[46], int color, double maxtime, clock_t start, char *str)
 {
-	int eval, value, bestVal = -1;
+	int eval = 0, value = 0, bestVal = -1;
 	struct move2 best;
 	struct move2 movesList[MAXMOVES];
 	int moveCount;
 
 	// For all depths
-	for (int currentDepth = 1; currentDepth < MAXDEPTH && clock() - start < maxtime; currentDepth++)
+	for (int currentDepth = 1; currentDepth < MAXDEPTH && passedCurrentTime(maxtime) == 0; currentDepth++)
 	{
-		// get the list of all possible moves
-		moveCount = generatemovelist(b, movesList, color);
+		// get the list of all capture moves
+		moveCount = generatecapturelist(b, movesList, color);
 
-		// if we can't make any moves
+		// If we don't have any forced captures, check for regular moves
+		if (moveCount == 0)
+		{
+			moveCount = generatemovelist(b, movesList, color);
+		}
+
+			// if we can't make any moves
 		if (moveCount == 0)
 		{
 			// return that we lost
@@ -300,12 +309,12 @@ int masterIterativeDeepening(int b[46], int color, double maxtime, clock_t start
 		}
 
 		// for each move
-		for (int i = 0; i < moveCount && clock() - start < maxtime; i++)
+		for (int i = 0; i < moveCount; i++)
 		{
 			// do the move
 			doMove(b, movesList[i]);
 			// get the value of the move
-			value = iterativeDeepening(b, color, maxtime, start, str, currentDepth - 1);
+			value = iterativeDeepening(b, color^CHANGECOLOR, maxtime, start, str, currentDepth - 1);
 			// undo the move
 			undoMove(b, movesList[i]);
 
@@ -335,9 +344,15 @@ int masterIterativeDeepening(int b[46], int color, double maxtime, clock_t start
 					}
 				}
 			}
+			comparisons++;
+			char printColor[5];
+			if (color == WHITE)
+				sprintf(printColor, "White");
+			else
+				sprintf(printColor, "Black");
+			sprintf(str, "MASTER %s - Comparisons: %i Depth: %i Move Count: %i Current Move: %i Value: %i BestVal: %i", printColor, comparisons, currentDepth, moveCount, i, value, bestVal);
 		}
 	}
-
 	doMove(b, best);
 
 	return eval;
@@ -346,37 +361,43 @@ int masterIterativeDeepening(int b[46], int color, double maxtime, clock_t start
 int iterativeDeepening(int b[46], int color, double maxtime, clock_t start, char *str, int depth)
 {
 	if (depth == 0)
-		return totalBlackPieces(b) - totalWhitePieces(b);
+	{
+		int blackPieces = totalBlackPieces(b), whitePieces = totalWhitePieces(b);
+		int moveVal = blackPieces - whitePieces;
+		return moveVal;
+	}
 
-	int value, bestVal, moveCount;
+	int value, bestVal = 0, moveCount;
 	struct move2 movesList[MAXMOVES];
 
-	// generate all possible moves at this depth
-	moveCount = generatemovelist(b, movesList, color);
+	moveCount = generatecapturelist(b, movesList, color);
 
+	if (moveCount == 0)
+	{
+		// generate all possible moves at this depth
+		moveCount = generatemovelist(b, movesList, color);
+	}	
+	
 	// If we can't make a move because we lost or we're "trapped"
 	if (moveCount == 0)
 	{
 		if (color == BLACK)
 		{
-			if (totalBlackPieces(b) == 0)
-				return -totalWhitePIeces(b);
+			return -100;
 		}
 		else if (color == WHITE)
 		{
-			if (totalWhitePieces(b) == 0)
-				return totalBlackPieces(b);
+			return 100;
 		}
-
-		return iterativeDeepening(b, color^CHANGECOLOR, maxtime, start, str, depth-1);
 	}
 
 	// for each move
-	for (int i = 0; i << moveCount && clock() - start < maxtime; i++)
+	for (int i = 0; i < moveCount && passedCurrentTime(maxtime) == 0; i++)
 	{
 		doMove(b, movesList[i]);
 		value = iterativeDeepening(b, color^CHANGECOLOR, maxtime, start, str, depth - 1);
 		undoMove(b, movesList[i]);
+		comparisons++;
 
 		if (i == 0)
 			bestVal = value;
@@ -398,33 +419,955 @@ int iterativeDeepening(int b[46], int color, double maxtime, clock_t start, char
 }
 
 void doMove(int b[46], struct move2 move)
+/*----------> purpose: execute move on board
+----------> version: 1.1
+----------> date: 25th october 97 */
 {
-	
+	int square, after;
+	int i;
+
+	for (i = 0; i<move.n; i++)
+	{
+		square = (move.m[i] % 256);
+		after = ((move.m[i] >> 16) % 256);
+		b[square] = after;
+	}
 }
 
 void undoMove(int b[46], struct move2 move)
+/*----------> purpose:
+----------> version: 1.1
+----------> date: 25th october 97 */
 {
+	int square, before;
+	int i;
 
+	for (i = 0; i<move.n; i++)
+	{
+		square = (move.m[i] % 256);
+		before = ((move.m[i] >> 8) % 256);
+		b[square] = before;
+	}
 }
 
 /*-------------- PART III: MOVE GENERATION -----------------------------------*/
 
 int generatemovelist(int b[46], struct move2 movelist[MAXMOVES], int color)
+/*----------> purpose:generates all moves. no captures. returns number of moves
+----------> version: 1.0
+----------> date: 25th october 97 */
 {
-	int totalMoves = 0;
+	int n = 0, m;
+	int i;
 
-	// Generate all black moves
 	if (color == BLACK)
 	{
-	//	for ()
+		for (i = 5; i <= 40; i++)
+		{
+			if ((b[i] & BLACK) != 0)
+			{
+				if ((b[i] & MAN) != 0)
+				{
+					if ((b[i + 4] & FREE) != 0)
+					{
+						movelist[n].n = 2;
+						if (i >= 32) m = (BLACK | KING); else m = (BLACK | MAN); m = m << 8;
+						m += FREE; m = m << 8;
+						m += i + 4;
+						movelist[n].m[1] = m;
+						m = FREE; m = m << 8;
+						m += (BLACK | MAN); m = m << 8;
+						m += i;
+						movelist[n].m[0] = m;
+						n++;
+					}
+					if ((b[i + 5] & FREE) != 0)
+					{
+						movelist[n].n = 2;
+						if (i >= 32) m = (BLACK | KING); else m = (BLACK | MAN); m = m << 8;
+						m += FREE; m = m << 8;
+						m += i + 5;
+						movelist[n].m[1] = m;
+						m = FREE; m = m << 8;
+						m += (BLACK | MAN); m = m << 8;
+						m += i;
+						movelist[n].m[0] = m;
+						n++;
+					}
+				}
+				if ((b[i] & KING) != 0)
+				{
+					if ((b[i + 4] & FREE) != 0)
+					{
+						movelist[n].n = 2;
+						m = (BLACK | KING); m = m << 8;
+						m += FREE; m = m << 8;
+						m += i + 4;
+						movelist[n].m[1] = m;
+						m = FREE; m = m << 8;
+						m += (BLACK | KING); m = m << 8;
+						m += i;
+						movelist[n].m[0] = m;
+						n++;
+					}
+					if ((b[i + 5] & FREE) != 0)
+					{
+						movelist[n].n = 2;
+						m = (BLACK | KING); m = m << 8;
+						m += FREE; m = m << 8;
+						m += i + 5;
+						movelist[n].m[1] = m;
+						m = FREE; m = m << 8;
+						m += (BLACK | KING); m = m << 8;
+						m += i;
+						movelist[n].m[0] = m;
+						n++;
+					}
+					if ((b[i - 4] & FREE) != 0)
+					{
+						movelist[n].n = 2;
+						m = (BLACK | KING); m = m << 8;
+						m += FREE; m = m << 8;
+						m += i - 4;
+						movelist[n].m[1] = m;
+						m = FREE; m = m << 8;
+						m += (BLACK | KING); m = m << 8;
+						m += i;
+						movelist[n].m[0] = m;
+						n++;
+					}
+					if ((b[i - 5] & FREE) != 0)
+					{
+						movelist[n].n = 2;
+						m = (BLACK | KING); m = m << 8;
+						m += FREE; m = m << 8;
+						m += i - 5;
+						movelist[n].m[1] = m;
+						m = FREE; m = m << 8;
+						m += (BLACK | KING); m = m << 8;
+						m += i;
+						movelist[n].m[0] = m;
+						n++;
+					}
+				}
+			}
+		}
 	}
-	// Generate all white moves
-	else
+	else    /* color = WHITE */
 	{
-	
+		for (i = 5; i <= 40; i++)
+		{
+			if ((b[i] & WHITE) != 0)
+			{
+				if ((b[i] & MAN) != 0)
+				{
+					if ((b[i - 4] & FREE) != 0)
+					{
+						movelist[n].n = 2;
+						if (i <= 13) m = (WHITE | KING); else m = (WHITE | MAN); m = m << 8;
+						m += FREE; m = m << 8;
+						m += i - 4;
+						movelist[n].m[1] = m;
+						m = FREE; m = m << 8;
+						m += (WHITE | MAN); m = m << 8;
+						m += i;
+						movelist[n].m[0] = m;
+						n++;
+					}
+					if ((b[i - 5] & FREE) != 0)
+					{
+						movelist[n].n = 2;
+						if (i <= 13) m = (WHITE | KING); else m = (WHITE | MAN); m = m << 8;
+						m += FREE; m = m << 8;
+						m += i - 5;
+						movelist[n].m[1] = m;
+						m = FREE; m = m << 8;
+						m += (WHITE | MAN); m = m << 8;
+						m += i;
+						movelist[n].m[0] = m;
+						n++;
+					}
+				}
+				if ((b[i] & KING) != 0)  /* or else */
+				{
+					if ((b[i + 4] & FREE) != 0)
+					{
+						movelist[n].n = 2;
+						m = (WHITE | KING); m = m << 8;
+						m += FREE; m = m << 8;
+						m += i + 4;
+						movelist[n].m[1] = m;
+						m = FREE; m = m << 8;
+						m += (WHITE | KING); m = m << 8;
+						m += i;
+						movelist[n].m[0] = m;
+						n++;
+					}
+					if ((b[i + 5] & FREE) != 0)
+					{
+						movelist[n].n = 2;
+						m = (WHITE | KING); m = m << 8;
+						m += FREE; m = m << 8;
+						m += i + 5;
+						movelist[n].m[1] = m;
+						m = FREE; m = m << 8;
+						m += (WHITE | KING); m = m << 8;
+						m += i;
+						movelist[n].m[0] = m;
+						n++;
+					}
+					if ((b[i - 4] & FREE) != 0)
+					{
+						movelist[n].n = 2;
+						m = (WHITE | KING); m = m << 8;
+						m += FREE; m = m << 8;
+						m += i - 4;
+						movelist[n].m[1] = m;
+						m = FREE; m = m << 8;
+						m += (WHITE | KING); m = m << 8;
+						m += i;
+						movelist[n].m[0] = m;
+						n++;
+					}
+					if ((b[i - 5] & FREE) != 0)
+					{
+						movelist[n].n = 2;
+						m = (WHITE | KING); m = m << 8;
+						m += FREE; m = m << 8;
+						m += i - 5;
+						movelist[n].m[1] = m;
+						m = FREE; m = m << 8;
+						m += (WHITE | KING); m = m << 8;
+						m += i;
+						movelist[n].m[0] = m;
+						n++;
+					}
+				}
+			}
+		}
 	}
+	return(n);
+}
 
-	return totalMoves;
+int  generatecapturelist(int b[46], struct move2 movelist[MAXMOVES], int color)
+/*----------> purpose: generate all possible captures
+----------> version: 1.0
+----------> date: 25th october 97 */
+{
+	int n = 0;
+	int m;
+	int i;
+	int tmp;
+
+	if (color == BLACK)
+	{
+		for (i = 5; i <= 40; i++)
+		{
+			if ((b[i] & BLACK) != 0)
+			{
+				if ((b[i] & MAN) != 0)
+				{
+					if ((b[i + 4] & WHITE) != 0)
+					{
+						if ((b[i + 8] & FREE) != 0)
+						{
+							movelist[n].n = 3;
+							if (i >= 28) m = (BLACK | KING); else m = (BLACK | MAN); m = m << 8;
+							m += FREE; m = m << 8;
+							m += i + 8;
+							movelist[n].m[1] = m;
+							m = FREE; m = m << 8;
+							m += (BLACK | MAN); m = m << 8;
+							m += i;
+							movelist[n].m[0] = m;
+							m = FREE; m = m << 8;
+							m += b[i + 4]; m = m << 8;
+							m += i + 4;
+							movelist[n].m[2] = m;
+							blackmancapture(b, &n, movelist, i + 8);
+						}
+					}
+					if ((b[i + 5] & WHITE) != 0)
+					{
+						if ((b[i + 10] & FREE) != 0)
+						{
+							movelist[n].n = 3;
+							if (i >= 28) m = (BLACK | KING); else m = (BLACK | MAN); m = m << 8;
+							m += FREE; m = m << 8;
+							m += i + 10;
+							movelist[n].m[1] = m;
+							m = FREE; m = m << 8;
+							m += (BLACK | MAN); m = m << 8;
+							m += i;
+							movelist[n].m[0] = m;
+							m = FREE; m = m << 8;
+							m += b[i + 5]; m = m << 8;
+							m += i + 5;
+							movelist[n].m[2] = m;
+							blackmancapture(b, &n, movelist, i + 10);
+						}
+					}
+				}
+				else /* b[i] is a KING */
+				{
+					if ((b[i + 4] & WHITE) != 0)
+					{
+						if ((b[i + 8] & FREE) != 0)
+						{
+							movelist[n].n = 3;
+							m = (BLACK | KING); m = m << 8;
+							m += FREE; m = m << 8;
+							m += i + 8;
+							movelist[n].m[1] = m;
+							m = FREE; m = m << 8;
+							m += (BLACK | KING); m = m << 8;
+							m += i;
+							movelist[n].m[0] = m;
+							m = FREE; m = m << 8;
+							m += b[i + 4]; m = m << 8;
+							m += i + 4;
+							movelist[n].m[2] = m;
+							tmp = b[i + 4];
+							b[i + 4] = FREE;
+							b[i] = FREE;
+							blackkingcapture(b, &n, movelist, i + 8);
+							b[i + 4] = tmp;
+							b[i] = BLACK | KING;
+						}
+					}
+					if ((b[i + 5] & WHITE) != 0)
+					{
+						if ((b[i + 10] & FREE) != 0)
+						{
+							movelist[n].n = 3;
+							m = (BLACK | KING); m = m << 8;
+							m += FREE; m = m << 8;
+							m += i + 10;
+							movelist[n].m[1] = m;
+							m = FREE; m = m << 8;
+							m += (BLACK | KING); m = m << 8;
+							m += i;
+							movelist[n].m[0] = m;
+							m = FREE; m = m << 8;
+							m += b[i + 5]; m = m << 8;
+							m += i + 5;
+							movelist[n].m[2] = m;
+							tmp = b[i + 5];
+							b[i + 5] = FREE;
+							b[i] = FREE;
+							blackkingcapture(b, &n, movelist, i + 10);
+							b[i + 5] = tmp;
+							b[i] = BLACK | KING;
+						}
+					}
+					if ((b[i - 4] & WHITE) != 0)
+					{
+						if ((b[i - 8] & FREE) != 0)
+						{
+							movelist[n].n = 3;
+							m = (BLACK | KING); m = m << 8;
+							m += FREE; m = m << 8;
+							m += i - 8;
+							movelist[n].m[1] = m;
+							m = FREE; m = m << 8;
+							m += (BLACK | KING); m = m << 8;
+							m += i;
+							movelist[n].m[0] = m;
+							m = FREE; m = m << 8;
+							m += b[i - 4]; m = m << 8;
+							m += i - 4;
+							movelist[n].m[2] = m;
+							tmp = b[i - 4];
+							b[i - 4] = FREE;
+							b[i] = FREE;
+							blackkingcapture(b, &n, movelist, i - 8);
+							b[i - 4] = tmp;
+							b[i] = BLACK | KING;
+						}
+					}
+					if ((b[i - 5] & WHITE) != 0)
+					{
+						if ((b[i - 10] & FREE) != 0)
+						{
+							movelist[n].n = 3;
+							m = (BLACK | KING); m = m << 8;
+							m += FREE; m = m << 8;
+							m += i - 10;
+							movelist[n].m[1] = m;
+							m = FREE; m = m << 8;
+							m += (BLACK | KING); m = m << 8;
+							m += i;
+							movelist[n].m[0] = m;
+							m = FREE; m = m << 8;
+							m += b[i - 5]; m = m << 8;
+							m += i - 5;
+							movelist[n].m[2] = m;
+							tmp = b[i - 5];
+							b[i - 5] = FREE;
+							b[i] = FREE;
+							blackkingcapture(b, &n, movelist, i - 10);
+							b[i - 5] = tmp;
+							b[i] = BLACK | KING;
+						}
+					}
+				}
+			}
+		}
+	}
+	else /* color is WHITE */
+	{
+		for (i = 5; i <= 40; i++)
+		{
+			if ((b[i] & WHITE) != 0)
+			{
+				if ((b[i] & MAN) != 0)
+				{
+					if ((b[i - 4] & BLACK) != 0)
+					{
+						if ((b[i - 8] & FREE) != 0)
+						{
+							movelist[n].n = 3;
+							if (i <= 17) m = (WHITE | KING); else m = (WHITE | MAN); m = m << 8;
+							m += FREE; m = m << 8;
+							m += i - 8;
+							movelist[n].m[1] = m;
+							m = FREE; m = m << 8;
+							m += (WHITE | MAN); m = m << 8;
+							m += i;
+							movelist[n].m[0] = m;
+							m = FREE; m = m << 8;
+							m += b[i - 4]; m = m << 8;
+							m += i - 4;
+							movelist[n].m[2] = m;
+							whitemancapture(b, &n, movelist, i - 8);
+						}
+					}
+					if ((b[i - 5] & BLACK) != 0)
+					{
+						if ((b[i - 10] & FREE) != 0)
+						{
+							movelist[n].n = 3;
+							if (i <= 17) m = (WHITE | KING); else m = (WHITE | MAN); m = m << 8;
+							m += FREE; m = m << 8;
+							m += i - 10;
+							movelist[n].m[1] = m;
+							m = FREE; m = m << 8;
+							m += (WHITE | MAN); m = m << 8;
+							m += i;
+							movelist[n].m[0] = m;
+							m = FREE; m = m << 8;
+							m += b[i - 5]; m = m << 8;
+							m += i - 5;
+							movelist[n].m[2] = m;
+							whitemancapture(b, &n, movelist, i - 10);
+						}
+					}
+				}
+				else /* b[i] is a KING */
+				{
+					if ((b[i + 4] & BLACK) != 0)
+					{
+						if ((b[i + 8] & FREE) != 0)
+						{
+							movelist[n].n = 3;
+							m = (WHITE | KING); m = m << 8;
+							m += FREE; m = m << 8;
+							m += i + 8;
+							movelist[n].m[1] = m;
+							m = FREE; m = m << 8;
+							m += (WHITE | KING); m = m << 8;
+							m += i;
+							movelist[n].m[0] = m;
+							m = FREE; m = m << 8;
+							m += b[i + 4]; m = m << 8;
+							m += i + 4;
+							movelist[n].m[2] = m;
+							tmp = b[i + 4];
+							b[i + 4] = FREE;
+							b[i] = FREE;
+							whitekingcapture(b, &n, movelist, i + 8);
+							b[i + 4] = tmp;
+							b[i] = WHITE | KING;
+						}
+					}
+					if ((b[i + 5] & BLACK) != 0)
+					{
+						if ((b[i + 10] & FREE) != 0)
+						{
+							movelist[n].n = 3;
+							m = (WHITE | KING); m = m << 8;
+							m += FREE; m = m << 8;
+							m += i + 10;
+							movelist[n].m[1] = m;
+							m = FREE; m = m << 8;
+							m += (WHITE | KING); m = m << 8;
+							m += i;
+							movelist[n].m[0] = m;
+							m = FREE; m = m << 8;
+							m += b[i + 5]; m = m << 8;
+							m += i + 5;
+							movelist[n].m[2] = m;
+							tmp = b[i + 5];
+							b[i + 5] = FREE;
+							b[i] = FREE;
+							whitekingcapture(b, &n, movelist, i + 10);
+							b[i + 5] = tmp;
+							b[i] = WHITE | KING;
+						}
+					}
+					if ((b[i - 4] & BLACK) != 0)
+					{
+						if ((b[i - 8] & FREE) != 0)
+						{
+							movelist[n].n = 3;
+							m = (WHITE | KING); m = m << 8;
+							m += FREE; m = m << 8;
+							m += i - 8;
+							movelist[n].m[1] = m;
+							m = FREE; m = m << 8;
+							m += (WHITE | KING); m = m << 8;
+							m += i;
+							movelist[n].m[0] = m;
+							m = FREE; m = m << 8;
+							m += b[i - 4]; m = m << 8;
+							m += i - 4;
+							movelist[n].m[2] = m;
+							tmp = b[i - 4];
+							b[i - 4] = FREE;
+							b[i] = FREE;
+							whitekingcapture(b, &n, movelist, i - 8);
+							b[i - 4] = tmp;
+							b[i] = WHITE | KING;
+						}
+					}
+					if ((b[i - 5] & BLACK) != 0)
+					{
+						if ((b[i - 10] & FREE) != 0)
+						{
+							movelist[n].n = 3;
+							m = (WHITE | KING); m = m << 8;
+							m += FREE; m = m << 8;
+							m += i - 10;
+							movelist[n].m[1] = m;
+							m = FREE; m = m << 8;
+							m += (WHITE | KING); m = m << 8;
+							m += i;
+							movelist[n].m[0] = m;
+							m = FREE; m = m << 8;
+							m += b[i - 5]; m = m << 8;
+							m += i - 5;
+							movelist[n].m[2] = m;
+							tmp = b[i - 5];
+							b[i - 5] = FREE;
+							b[i] = FREE;
+							whitekingcapture(b, &n, movelist, i - 10);
+							b[i - 5] = tmp;
+							b[i] = WHITE | KING;
+						}
+					}
+				}
+			}
+		}
+	}
+	return(n);
+}
+
+void  blackmancapture(int b[46], int *n, struct move2 movelist[MAXMOVES], int i)
+{
+	int m;
+	int found = 0;
+	struct move2 move, orgmove;
+
+	orgmove = movelist[*n];
+	move = orgmove;
+
+	if ((b[i + 4] & WHITE) != 0)
+	{
+		if ((b[i + 8] & FREE) != 0)
+		{
+			move.n++;
+			if (i >= 28) m = (BLACK | KING); else m = (BLACK | MAN); m = m << 8;
+			m += FREE; m = m << 8;
+			m += (i + 8);
+			move.m[1] = m;
+			m = FREE; m = m << 8;
+			m += b[i + 4]; m = m << 8;
+			m += (i + 4);
+			move.m[move.n - 1] = m;
+			found = 1;
+			movelist[*n] = move;
+			blackmancapture(b, n, movelist, i + 8);
+		}
+	}
+	move = orgmove;
+	if ((b[i + 5] & WHITE) != 0)
+	{
+		if ((b[i + 10] & FREE) != 0)
+		{
+			move.n++;
+			if (i >= 28) m = (BLACK | KING); else m = (BLACK | MAN); m = m << 8;
+			m += FREE; m = m << 8;
+			m += (i + 10);
+			move.m[1] = m;
+			m = FREE; m = m << 8;
+			m += b[i + 5]; m = m << 8;
+			m += (i + 5);
+			move.m[move.n - 1] = m;
+			found = 1;
+			movelist[*n] = move;
+			blackmancapture(b, n, movelist, i + 10);
+		}
+	}
+	if (!found) (*n)++;
+}
+
+void  blackkingcapture(int b[46], int *n, struct move2 movelist[MAXMOVES], int i)
+{
+	int m;
+	int tmp;
+	int found = 0;
+	struct move2 move, orgmove;
+
+	orgmove = movelist[*n];
+	move = orgmove;
+
+	if ((b[i - 4] & WHITE) != 0)
+	{
+		if ((b[i - 8] & FREE) != 0)
+		{
+			move.n++;
+			m = (BLACK | KING); m = m << 8;
+			m += FREE; m = m << 8;
+			m += i - 8;
+			move.m[1] = m;
+			m = FREE; m = m << 8;
+			m += b[i - 4]; m = m << 8;
+			m += i - 4;
+			move.m[move.n - 1] = m;
+			found = 1;
+			movelist[*n] = move;
+			tmp = b[i - 4];
+			b[i - 4] = FREE;
+			blackkingcapture(b, n, movelist, i - 8);
+			b[i - 4] = tmp;
+		}
+	}
+	move = orgmove;
+	if ((b[i - 5] & WHITE) != 0)
+	{
+		if ((b[i - 10] & FREE) != 0)
+		{
+			move.n++;
+			m = (BLACK | KING); m = m << 8;
+			m += FREE; m = m << 8;
+			m += i - 10;
+			move.m[1] = m;
+			m = FREE; m = m << 8;
+			m += b[i - 5]; m = m << 8;
+			m += i - 5;
+			move.m[move.n - 1] = m;
+			found = 1;
+			movelist[*n] = move;
+			tmp = b[i - 5];
+			b[i - 5] = FREE;
+			blackkingcapture(b, n, movelist, i - 10);
+			b[i - 5] = tmp;
+		}
+	}
+	move = orgmove;
+	if ((b[i + 4] & WHITE) != 0)
+	{
+		if ((b[i + 8] & FREE) != 0)
+		{
+			move.n++;
+			m = (BLACK | KING); m = m << 8;
+			m += FREE; m = m << 8;
+			m += i + 8;
+			move.m[1] = m;
+			m = FREE; m = m << 8;
+			m += b[i + 4]; m = m << 8;
+			m += i + 4;
+			move.m[move.n - 1] = m;
+			found = 1;
+			movelist[*n] = move;
+			tmp = b[i + 4];
+			b[i + 4] = FREE;
+			blackkingcapture(b, n, movelist, i + 8);
+			b[i + 4] = tmp;
+		}
+	}
+	move = orgmove;
+	if ((b[i + 5] & WHITE) != 0)
+	{
+		if ((b[i + 10] & FREE) != 0)
+		{
+			move.n++;
+			m = (BLACK | KING); m = m << 8;
+			m += FREE; m = m << 8;
+			m += i + 10;
+			move.m[1] = m;
+			m = FREE; m = m << 8;
+			m += b[i + 5]; m = m << 8;
+			m += i + 5;
+			move.m[move.n - 1] = m;
+			found = 1;
+			movelist[*n] = move;
+			tmp = b[i + 5];
+			b[i + 5] = FREE;
+			blackkingcapture(b, n, movelist, i + 10);
+			b[i + 5] = tmp;
+		}
+	}
+	if (!found) (*n)++;
+}
+
+void  whitemancapture(int b[46], int *n, struct move2 movelist[MAXMOVES], int i)
+{
+	int m;
+	int found = 0;
+	struct move2 move, orgmove;
+
+	orgmove = movelist[*n];
+	move = orgmove;
+
+	if ((b[i - 4] & BLACK) != 0)
+	{
+		if ((b[i - 8] & FREE) != 0)
+		{
+			move.n++;
+			if (i <= 17) m = (WHITE | KING); else m = (WHITE | MAN); m = m << 8;
+			m += FREE; m = m << 8;
+			m += i - 8;
+			move.m[1] = m;
+			m = FREE; m = m << 8;
+			m += b[i - 4]; m = m << 8;
+			m += i - 4;
+			move.m[move.n - 1] = m;
+			found = 1;
+			movelist[*n] = move;
+			whitemancapture(b, n, movelist, i - 8);
+		}
+	}
+	move = orgmove;
+	if ((b[i - 5] & BLACK) != 0)
+	{
+		if ((b[i - 10] & FREE) != 0)
+		{
+			move.n++;
+			if (i <= 17) m = (WHITE | KING); else m = (WHITE | MAN); m = m << 8;
+			m += FREE; m = m << 8;
+			m += i - 10;
+			move.m[1] = m;
+			m = FREE; m = m << 8;
+			m += b[i - 5]; m = m << 8;
+			m += i - 5;
+			move.m[move.n - 1] = m;
+			found = 1;
+			movelist[*n] = move;
+			whitemancapture(b, n, movelist, i - 10);
+		}
+	}
+	if (!found) (*n)++;
+}
+
+void  whitekingcapture(int b[46], int *n, struct move2 movelist[MAXMOVES], int i)
+{
+	int m;
+	int tmp;
+	int found = 0;
+	struct move2 move, orgmove;
+
+	orgmove = movelist[*n];
+	move = orgmove;
+
+	if ((b[i - 4] & BLACK) != 0)
+	{
+		if ((b[i - 8] & FREE) != 0)
+		{
+			move.n++;
+			m = (WHITE | KING); m = m << 8;
+			m += FREE; m = m << 8;
+			m += i - 8;
+			move.m[1] = m;
+			m = FREE; m = m << 8;
+			m += b[i - 4]; m = m << 8;
+			m += i - 4;
+			move.m[move.n - 1] = m;
+			found = 1;
+			movelist[*n] = move;
+			tmp = b[i - 4];
+			b[i - 4] = FREE;
+			whitekingcapture(b, n, movelist, i - 8);
+			b[i - 4] = tmp;
+		}
+	}
+	move = orgmove;
+	if ((b[i - 5] & BLACK) != 0)
+	{
+		if ((b[i - 10] & FREE) != 0)
+		{
+			move.n++;
+			m = (WHITE | KING); m = m << 8;
+			m += FREE; m = m << 8;
+			m += i - 10;
+			move.m[1] = m;
+			m = FREE; m = m << 8;
+			m += b[i - 5]; m = m << 8;
+			m += i - 5;
+			move.m[move.n - 1] = m;
+			found = 1;
+			movelist[*n] = move;
+			tmp = b[i - 5];
+			b[i - 5] = FREE;
+			whitekingcapture(b, n, movelist, i - 10);
+			b[i - 5] = tmp;
+		}
+	}
+	move = orgmove;
+	if ((b[i + 4] & BLACK) != 0)
+	{
+		if ((b[i + 8] & FREE) != 0)
+		{
+			move.n++;
+			m = (WHITE | KING); m = m << 8;
+			m += FREE; m = m << 8;
+			m += i + 8;
+			move.m[1] = m;
+			m = FREE; m = m << 8;
+			m += b[i + 4]; m = m << 8;
+			m += i + 4;
+			move.m[move.n - 1] = m;
+			found = 1;
+			movelist[*n] = move;
+			tmp = b[i + 4];
+			b[i + 4] = FREE;
+			whitekingcapture(b, n, movelist, i + 8);
+			b[i + 4] = tmp;
+		}
+	}
+	move = orgmove;
+	if ((b[i + 5] & BLACK) != 0)
+	{
+		if ((b[i + 10] & FREE) != 0)
+		{
+			move.n++;
+			m = (WHITE | KING); m = m << 8;
+			m += FREE; m = m << 8;
+			m += i + 10;
+			move.m[1] = m;
+			m = FREE; m = m << 8;
+			m += b[i + 5]; m = m << 8;
+			m += i + 5;
+			move.m[move.n - 1] = m;
+			found = 1;
+			movelist[*n] = move;
+			tmp = b[i + 5];
+			b[i + 5] = FREE;
+			whitekingcapture(b, n, movelist, i + 10);
+			b[i + 5] = tmp;
+		}
+	}
+	if (!found) (*n)++;
+}
+
+int  testcapture(int b[46], int color)
+/*----------> purpose: test if color has a capture on b
+----------> version: 1.0
+----------> date: 25th october 97 */
+{
+	int i;
+
+	if (color == BLACK)
+	{
+		for (i = 5; i <= 40; i++)
+		{
+			if ((b[i] & BLACK) != 0)
+			{
+				if ((b[i] & MAN) != 0)
+				{
+					if ((b[i + 4] & WHITE) != 0)
+					{
+						if ((b[i + 8] & FREE) != 0)
+							return(1);
+					}
+					if ((b[i + 5] & WHITE) != 0)
+					{
+						if ((b[i + 10] & FREE) != 0)
+							return(1);
+					}
+				}
+				else /* b[i] is a KING */
+				{
+					if ((b[i + 4] & WHITE) != 0)
+					{
+						if ((b[i + 8] & FREE) != 0)
+							return(1);
+					}
+					if ((b[i + 5] & WHITE) != 0)
+					{
+						if ((b[i + 10] & FREE) != 0)
+							return(1);
+					}
+					if ((b[i - 4] & WHITE) != 0)
+					{
+						if ((b[i - 8] & FREE) != 0)
+							return(1);
+					}
+					if ((b[i - 5] & WHITE) != 0)
+					{
+						if ((b[i - 10] & FREE) != 0)
+							return(1);
+					}
+				}
+			}
+		}
+	}
+	else /* color is WHITE */
+	{
+		for (i = 5; i <= 40; i++)
+		{
+			if ((b[i] & WHITE) != 0)
+			{
+				if ((b[i] & MAN) != 0)
+				{
+					if ((b[i - 4] & BLACK) != 0)
+					{
+						if ((b[i - 8] & FREE) != 0)
+							return(1);
+					}
+					if ((b[i - 5] & BLACK) != 0)
+					{
+						if ((b[i - 10] & FREE) != 0)
+							return(1);
+					}
+				}
+				else /* b[i] is a KING */
+				{
+					if ((b[i + 4] & BLACK) != 0)
+					{
+						if ((b[i + 8] & FREE) != 0)
+							return(1);
+					}
+					if ((b[i + 5] & BLACK) != 0)
+					{
+						if ((b[i + 10] & FREE) != 0)
+							return(1);
+					}
+					if ((b[i - 4] & BLACK) != 0)
+					{
+						if ((b[i - 8] & FREE) != 0)
+							return(1);
+					}
+					if ((b[i - 5] & BLACK) != 0)
+					{
+						if ((b[i - 10] & FREE) != 0)
+							return(1);
+					}
+				}
+			}
+		}
+	}
+	return(0);
 }
 
 /******************** Heuristics */
@@ -434,7 +1377,7 @@ int numWhiteMen(int board[46])
 	int count = 0;
 	for (int i = 0; i < 46; i++)
 	{
-		if (board[i] == WHITE | MAN)
+		if ((int)(board[i]^MAN) == WHITE)
 			count++;
 	}
 
@@ -446,7 +1389,7 @@ int numWhiteKings(int board[46])
 	int count = 0;
 	for (int i = 0; i < 46; i++)
 	{
-		if (board[i] == WHITE | KING)
+		if ((int)(board[i]^KING) == WHITE)
 			count++;
 	}
 
@@ -458,7 +1401,7 @@ int numBlackMen(int board[46])
 	int count = 0;
 	for (int i = 0; i < 46; i++)
 	{
-		if (board[i] == BLACK | MAN)
+		if ((int)(board[i]^MAN) == BLACK)
 			count++;
 	}
 
@@ -470,10 +1413,11 @@ int numBlackKings(int board[46])
 	int count = 0;
 	for (int i = 0; i < 46; i++)
 	{
-		if (board[i] == BLACK | KING)
+		if ((int)(board[i]^KING) == BLACK)
+		{
 			count++;
+		}
 	}
-
 	return count;
 }
 
@@ -485,4 +1429,12 @@ int totalWhitePieces(int board[46])
 int totalBlackPieces(int board[46])
 {
 	return numBlackMen(board) + numBlackKings(board);
+}
+
+int passedCurrentTime(double maxTime)
+{
+	double currentTime = (double)((clock() - start) / CLK_TCK);
+	if (currentTime > maxTime)
+		return 1;
+	return 0;
 }

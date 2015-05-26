@@ -1,0 +1,17 @@
+﻿Build started 5/25/2015 11:59:10 PM.
+     1>Project "C:\Users\Jonathan\Desktop\CheckersAI_Project\CS175_Checkers\CS175_MiniMaxAB\CS175_Team12_IterDeep\CS175_Team12_IterDeep.vcxproj" on node 2 (Build target(s)).
+     1>ClCompile:
+         C:\Program Files (x86)\Microsoft Visual Studio 12.0\VC\bin\CL.exe /c /Zi /nologo /W3 /WX- /sdl /O2 /Oi /Oy- /GL /D WIN32 /D _CRT_SECURE_NO_WARNINGS /D NDEBUG /D _WINDOWS /D _USRDLL /D CS175_TEAM12_ITERDEEP_EXPORTS /D _WINDLL /D _UNICODE /D UNICODE /Gm- /EHsc /MD /GS /Gy /fp:precise /Zc:wchar_t /Zc:forScope /Fo"Release\\" /Fd"Release\vc120.pdb" /Gd /TC /analyze- /errorReport:prompt CS175_Team12_IterDeep.c
+         CS175_Team12_IterDeep.c
+     1>CS175_Team12_IterDeep.c(268): warning C4101: 'numOfMoves' : unreferenced local variable
+       Link:
+         C:\Program Files (x86)\Microsoft Visual Studio 12.0\VC\bin\link.exe /ERRORREPORT:PROMPT /OUT:"C:\Users\Jonathan\Desktop\CheckersAI_Project\CS175_Checkers\CS175_MiniMaxAB\Release\CS175_Team12_IterDeep.dll" /INCREMENTAL:NO /NOLOGO kernel32.lib user32.lib gdi32.lib winspool.lib comdlg32.lib advapi32.lib shell32.lib ole32.lib oleaut32.lib uuid.lib odbc32.lib odbccp32.lib /DEF:"CS175_Team12_IterDeep.def" /MANIFEST /MANIFESTUAC:"level='asInvoker' uiAccess='false'" /manifest:embed /DEBUG /PDB:"C:\Users\Jonathan\Desktop\CheckersAI_Project\CS175_Checkers\CS175_MiniMaxAB\Release\CS175_Team12_IterDeep.pdb" /SUBSYSTEM:WINDOWS /OPT:REF /OPT:ICF /LTCG /TLBID:1 /DYNAMICBASE /NXCOMPAT /IMPLIB:"C:\Users\Jonathan\Desktop\CheckersAI_Project\CS175_Checkers\CS175_MiniMaxAB\Release\CS175_Team12_IterDeep.lib" /MACHINE:X86 /SAFESEH /DLL Release\CS175_Team12_IterDeep.obj
+            Creating library C:\Users\Jonathan\Desktop\CheckersAI_Project\CS175_Checkers\CS175_MiniMaxAB\Release\CS175_Team12_IterDeep.lib and object C:\Users\Jonathan\Desktop\CheckersAI_Project\CS175_Checkers\CS175_MiniMaxAB\Release\CS175_Team12_IterDeep.exp
+         Generating code
+         Finished generating code
+         CS175_Team12_IterDeep.vcxproj -> C:\Users\Jonathan\Desktop\CheckersAI_Project\CS175_Checkers\CS175_MiniMaxAB\Release\CS175_Team12_IterDeep.dll
+     1>Done Building Project "C:\Users\Jonathan\Desktop\CheckersAI_Project\CS175_Checkers\CS175_MiniMaxAB\CS175_Team12_IterDeep\CS175_Team12_IterDeep.vcxproj" (Build target(s)).
+
+Build succeeded.
+
+Time Elapsed 00:00:03.42
