@@ -22,8 +22,10 @@ separated in the code.
 #define KING 8
 #define FREE 16
 #define CHANGECOLOR 3
-#define MAXDEPTH 10
+#define MAXDEPTH 21
 #define MAXMOVES 28
+#define KING_WEIGHT 15
+#define PIECE_WEIGHT 10
 
 /*----------> compile options  */
 #undef MUTE
@@ -68,7 +70,12 @@ MessageBox stating that this option is in fact not an option*/
 
 int comparisons;
 clock_t start;
-int passedCurrentTime(double maxTime);
+int passedMaxTime(double maxTime);
+int locationVal[46] = { 0, 0, 0, 0, 0, 4, 4, 4, 4, 0,
+3, 3, 3, 4, 4, 2, 2, 3, 0, 3,
+1, 2, 4, 4, 2, 1, 3, 0, 3, 2,
+2, 4, 4, 3, 3, 3, 0, 4, 4, 4,
+4, 0, 0, 0, 0, 0 };
 
 /* required functions */
 int  WINAPI getmove(int b[8][8], int color, double maxtime, char str[255], int *playnow, int info, int unused, struct CBmove *move);
@@ -78,7 +85,7 @@ int  checkers(int b[46], int color, double maxtime, char *str);
 void doMove(int b[46], struct move2 move);
 void undoMove(int b[46], struct move2 move);
 int masterIterativeDeepening(int b[46], int color, double maxtime, clock_t start, char *str);
-int iterativeDeepening(int b[46], int color, double maxtime, clock_t start, char *str, int depth);
+int iterativeDeepening(int b[46], int color, double maxtime, clock_t start, char *str, int depth, int quit[1]);
 
 /*----------> part III: move generation */
 
@@ -92,12 +99,11 @@ int  testcapture(int b[46], int color);
 
 /*********** Heuristics */
 
-int numWhiteMen(int board[46]);
-int numWhiteKings(int board[46]);
-int numBlackMen(int board[46]);
-int numBlackKings(int board[46]);
-int totalWhitePieces(int board[46]);
-int totalBlackPieces(int board[46]);
+int evaluation(int board[46]);
+int numMen(int board[46], int color);
+int numKings(int board[46], int color);
+int totalPieces(int board[46], int color);
+int piecePositionScore(int board[46], int color);
 
 /*-------------- PART 1: dll stuff -------------------------------------------*/
 
@@ -139,13 +145,13 @@ int WINAPI enginecommand(char str[256], char reply[256])
 
 	if (strcmp(command, "name") == 0)
 	{
-		sprintf(reply, "CS 175 Team 12 - Iterative Deepening");
+		sprintf(reply, "CS 175 Team 12 - Iterative Deepening w\ Minimax and Quiescence Search");
 		return 1;
 	}
 
 	if (strcmp(command, "about") == 0)
 	{
-		sprintf(reply, "Team 12 - Iterative Deepening\n\n2015 CS 175");
+		sprintf(reply, "Team 12 - Iterative Deepening with Minimax and Quiescence Search\n\n2015 CS 175");
 		return 1;
 	}
 
@@ -216,22 +222,22 @@ int WINAPI getmove(int b[8][8], int color, double maxtime, char str[255], int *p
 	board[28] = b[1][5]; board[29] = b[3][5]; board[30] = b[5][5]; board[31] = b[7][5];
 	board[32] = b[0][6]; board[33] = b[2][6]; board[34] = b[4][6]; board[35] = b[6][6];
 	board[37] = b[1][7]; board[38] = b[3][7]; board[39] = b[5][7]; board[40] = b[7][7];
-	
+
 	// Ensure the empty positions are free
 	for (i = 5; i <= 40; i++)
-		if (board[i] == 0) 
-			board[i] = FREE;
+	if (board[i] == 0)
+		board[i] = FREE;
 	for (i = 9; i <= 36; i += 9)
 		board[i] = OCCUPIED;
 
 	// Calculate move
 	value = checkers(board, color, maxtime, str);
-	
+
 	// Return all free positions back to empty
 	for (i = 5; i <= 40; i++)
-		if (board[i] == FREE)
-			board[i] = 0;
-	
+	if (board[i] == FREE)
+		board[i] = 0;
+
 	// Return the adjusted board
 	b[0][0] = board[5]; b[2][0] = board[6]; b[4][0] = board[7]; b[6][0] = board[8];
 	b[1][1] = board[10]; b[3][1] = board[11]; b[5][1] = board[12]; b[7][1] = board[13];
@@ -275,46 +281,54 @@ int  checkers(int b[46], int color, double maxtime, char *str)
 
 int masterIterativeDeepening(int b[46], int color, double maxtime, clock_t start, char *str)
 {
-	int eval = 0, value = 0, bestVal = -1;
-	struct move2 best;
+	int nextDepth;
+	int quitEarly[1] = { 0 };
+	int eval = 0, value = 0, bestVal = -1, currentBestMove = 0, savedBestMove = 0;
+	struct move2 best, completedBest;
 	struct move2 movesList[MAXMOVES];
 	int moveCount;
 
 	// For all depths
-	for (int currentDepth = 1; currentDepth < MAXDEPTH && passedCurrentTime(maxtime) == 0; currentDepth++)
+	for (int currentDepth = 1; currentDepth < MAXDEPTH && quitEarly[0] == 0; currentDepth++)
 	{
 		// get the list of all capture moves
 		moveCount = generatecapturelist(b, movesList, color);
+		nextDepth = currentDepth;
 
 		// If we don't have any forced captures, check for regular moves
 		if (moveCount == 0)
 		{
 			moveCount = generatemovelist(b, movesList, color);
+			--nextDepth;
 		}
 
-			// if we can't make any moves
+		// if we can't make any moves
 		if (moveCount == 0)
 		{
 			// return that we lost
 			if (color == BLACK)
 			{
-				if (totalBlackPieces(b) == 0)
-					return -1;
+				return -1000;
 			}
 			else if (color == WHITE)
 			{
-				if (totalWhitePieces(b) == 0)
-					return 1;
+				return 1000;
 			}
+		}
+		else if (moveCount == 1)
+		{
+			sprintf(str, "Forced Move");
+			best = movesList[0];
+			quitEarly[0] = 1;
 		}
 
 		// for each move
-		for (int i = 0; i < moveCount; i++)
+		for (int i = 0; i < moveCount && quitEarly[0] == 0; i++)
 		{
 			// do the move
 			doMove(b, movesList[i]);
 			// get the value of the move
-			value = iterativeDeepening(b, color^CHANGECOLOR, maxtime, start, str, currentDepth - 1);
+			value = iterativeDeepening(b, color^CHANGECOLOR, maxtime, start, str, nextDepth, quitEarly);
 			// undo the move
 			undoMove(b, movesList[i]);
 
@@ -323,6 +337,7 @@ int masterIterativeDeepening(int b[46], int color, double maxtime, clock_t start
 			{
 				bestVal = value;
 				best = movesList[i];
+				currentBestMove = 1;
 			}
 			else
 			{
@@ -333,6 +348,7 @@ int masterIterativeDeepening(int b[46], int color, double maxtime, clock_t start
 					{
 						bestVal = value;
 						best = movesList[i];
+						currentBestMove = i + 1;
 					}
 				}
 				else if (color == WHITE)
@@ -341,6 +357,7 @@ int masterIterativeDeepening(int b[46], int color, double maxtime, clock_t start
 					{
 						bestVal = value;
 						best = movesList[i];
+						currentBestMove = i + 1;
 					}
 				}
 			}
@@ -350,24 +367,26 @@ int masterIterativeDeepening(int b[46], int color, double maxtime, clock_t start
 				sprintf(printColor, "White");
 			else
 				sprintf(printColor, "Black");
-			sprintf(str, "MASTER %s - Comparisons: %i Depth: %i Move Count: %i Current Move: %i Value: %i BestVal: %i", printColor, comparisons, currentDepth, moveCount, i, value, bestVal);
+			sprintf(str, "MASTER %s - Comparisons: %i Depth: %i Move Count: %i Current Move: %i Value: %i BestVal: %i Saved Best: %i", printColor, comparisons, currentDepth, moveCount, (i + 1), value, bestVal, savedBestMove);
+		}
+
+		if (quitEarly[0] == 0 || currentDepth == 1)
+		{
+			savedBestMove = currentBestMove;
+			completedBest = best;
 		}
 	}
-	doMove(b, best);
+	doMove(b, completedBest);
 
 	return eval;
 }
 
-int iterativeDeepening(int b[46], int color, double maxtime, clock_t start, char *str, int depth)
+int iterativeDeepening(int b[46], int color, double maxtime, clock_t start, char *str, int depth, int quit[1])
 {
 	if (depth == 0)
-	{
-		int blackPieces = totalBlackPieces(b), whitePieces = totalWhitePieces(b);
-		int moveVal = blackPieces - whitePieces;
-		return moveVal;
-	}
+		return evaluation(b);
 
-	int value, bestVal = 0, moveCount;
+	int value, bestVal = 0, moveCount, currentDepth = depth;
 	struct move2 movesList[MAXMOVES];
 
 	moveCount = generatecapturelist(b, movesList, color);
@@ -376,26 +395,27 @@ int iterativeDeepening(int b[46], int color, double maxtime, clock_t start, char
 	{
 		// generate all possible moves at this depth
 		moveCount = generatemovelist(b, movesList, color);
-	}	
-	
+		--currentDepth;
+	}
+
 	// If we can't make a move because we lost or we're "trapped"
 	if (moveCount == 0)
 	{
 		if (color == BLACK)
 		{
-			return -100;
+			return -1000;
 		}
 		else if (color == WHITE)
 		{
-			return 100;
+			return 1000;
 		}
 	}
 
 	// for each move
-	for (int i = 0; i < moveCount && passedCurrentTime(maxtime) == 0; i++)
+	for (int i = 0; i < moveCount && quit[0] == 0; i++)
 	{
 		doMove(b, movesList[i]);
-		value = iterativeDeepening(b, color^CHANGECOLOR, maxtime, start, str, depth - 1);
+		value = iterativeDeepening(b, color^CHANGECOLOR, maxtime, start, str, currentDepth, quit);
 		undoMove(b, movesList[i]);
 		comparisons++;
 
@@ -413,6 +433,12 @@ int iterativeDeepening(int b[46], int color, double maxtime, clock_t start, char
 				if (value < bestVal)
 					bestVal = value;
 			}
+		}
+
+		if (passedMaxTime(maxtime) == 1)
+		{
+			quit[0] = 1;
+			return bestVal;
 		}
 	}
 	return bestVal;
@@ -1372,48 +1398,24 @@ int  testcapture(int b[46], int color)
 
 /******************** Heuristics */
 
-int numWhiteMen(int board[46])
+int numMen(int board[46], int color)
 {
 	int count = 0;
 	for (int i = 0; i < 46; i++)
 	{
-		if ((int)(board[i]^MAN) == WHITE)
+		if ((int)(board[i] ^ MAN) == color)
 			count++;
 	}
 
 	return count;
 }
 
-int numWhiteKings(int board[46])
+int numKings(int board[46], int color)
 {
 	int count = 0;
 	for (int i = 0; i < 46; i++)
 	{
-		if ((int)(board[i]^KING) == WHITE)
-			count++;
-	}
-
-	return count;
-}
-
-int numBlackMen(int board[46])
-{
-	int count = 0;
-	for (int i = 0; i < 46; i++)
-	{
-		if ((int)(board[i]^MAN) == BLACK)
-			count++;
-	}
-
-	return count;
-}
-
-int numBlackKings(int board[46])
-{
-	int count = 0;
-	for (int i = 0; i < 46; i++)
-	{
-		if ((int)(board[i]^KING) == BLACK)
+		if ((int)(board[i] ^ KING) == color)
 		{
 			count++;
 		}
@@ -1421,17 +1423,33 @@ int numBlackKings(int board[46])
 	return count;
 }
 
-int totalWhitePieces(int board[46])
+int totalPieces(int board[46], int color)
 {
-	return numWhiteMen(board) + numWhiteKings(board);
+	return numMen(board, color) + numKings(board, color);
 }
 
-int totalBlackPieces(int board[46])
+int evaluation(int board[46])
 {
-	return numBlackMen(board) + numBlackKings(board);
+	int blackPieces = totalPieces(board, BLACK), whitePieces = totalPieces(board, WHITE);
+	int moveVal = ((numKings(board, BLACK)*KING_WEIGHT) + (blackPieces*PIECE_WEIGHT) + piecePositionScore(board, BLACK)) - ((numKings(board, WHITE)*KING_WEIGHT) + (whitePieces*PIECE_WEIGHT) + piecePositionScore(board, WHITE));
+	return moveVal;
 }
 
-int passedCurrentTime(double maxTime)
+int piecePositionScore(int board[46], int color)
+{
+	int score = 0;
+	for (int i = 0; i < 46; i++)
+	{
+		if ((int)(board[i] ^ color) == KING || (int)(board[i] ^ color) == MAN)
+		{
+			score += locationVal[i];
+		}
+	}
+
+	return score;
+}
+
+int passedMaxTime(double maxTime)
 {
 	double currentTime = (double)((clock() - start) / CLK_TCK);
 	if (currentTime > maxTime)
