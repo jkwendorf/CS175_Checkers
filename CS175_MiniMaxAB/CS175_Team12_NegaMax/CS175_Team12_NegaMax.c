@@ -315,31 +315,31 @@ int masterNegamax(int b[46], int color, double maxtime, clock_t start, char *str
 {
 	struct move2 movelist[MAXMOVES];
 	struct move2 best;
-	int  capture, eval = 0, numberofmoves, value = 0, bestvalue = -1*INFINITY;
+	int  eval = 0, moves, value = 0, bestvalue = -1*INFINITY;
 	int quitEarly[1] = { 0 };
 	
 	for (int depth = 1; depth < MAXDEPTH && quitEarly[0] == 0; depth++)
 	{
 		//test if captures are availiable
-		capture = testcapture(b, color);
+		moves = testcapture(b, color);
 		
 		//generate all possible moves in the position
-		if (capture == 0)
+		if (moves == 0)
 		{
-			numberofmoves = generatemovelist(b, movelist, color);
+			moves = generatemovelist(b, movelist, color);
 			// if no moves, lose
-			if (numberofmoves == 0) 
+			if (moves == 0) 
 			{ 
 				if (color == BLACK) 
-					return(-5000); 
+					return(-1000); 
 				else 
-					return(5000);
+					return(1000);
 			}
 		}
 		else
-			numberofmoves = generatecapturelist(b, movelist, color);
+			moves = generatecapturelist(b, movelist, color);
 
-		if (numberofmoves == 1)
+		if (moves == 1)
 		{
 			sprintf(str, "Forced Move");
 			best = movelist[0];
@@ -347,7 +347,7 @@ int masterNegamax(int b[46], int color, double maxtime, clock_t start, char *str
 		}
 
 
-		for (int i = 0; i < numberofmoves && quitEarly[0] == 0; i++)
+		for (int i = 0; i < moves && quitEarly[0] == 0; i++)
 		{
 			//do move
 			domove(b, movelist[i]);
@@ -369,7 +369,7 @@ int masterNegamax(int b[46], int color, double maxtime, clock_t start, char *str
 				sprintf(printColor, "White");
 			else
 				sprintf(printColor, "Black");
-			sprintf(str, "MASTER %s - Comparisons: %i Depth: %i Move Count: %i Current Move: %i Value: %i BestVal: %i", printColor, comparisons, depth, numberofmoves, (i + 1), value, bestvalue);
+			sprintf(str, "MASTER %s - Comparisons: %i Depth: %i Move Count: %i Current Move: %i Value: %i BestVal: %i", printColor, comparisons, depth, moves, (i + 1), value, bestvalue);
 		}
 	}
 
@@ -381,7 +381,7 @@ int masterNegamax(int b[46], int color, double maxtime, clock_t start, char *str
 int negamax(int b[46], int depth, int color, double maxtime, clock_t start, int quit[1],int player, int a, int beta)
 {
 	struct move2 movelist[MAXMOVES];
-	int  opponent, capture, numberofmoves, value = -1 * INFINITY;
+	int  opponent, moves, value = -1 * INFINITY;
 	int localalpha = a;
 
 	if (color == BLACK)
@@ -389,33 +389,33 @@ int negamax(int b[46], int depth, int color, double maxtime, clock_t start, int 
 	else
 		opponent = BLACK;
 
-	capture = testcapture(b, color);
+	moves = testcapture(b, color);
 
 	if (depth == 0)
 	{
-		if (capture == 0)
+		if (moves == 0)
 			return(evaluation(b, color, player));
 		else
 			depth = 1;
 	};
 
 	// generate all possible moves in the position
-	if (capture == 0)
+	if (moves == 0)
 	{
-		numberofmoves = generatemovelist(b, movelist, color);
+		moves = generatemovelist(b, movelist, color);
 		//if no possible moves, lose
-		if (numberofmoves == 0)  
+		if (moves == 0)  
 		{	if (opponent == BLACK) 
-				return(5000);
+				return(1000);
 			else 
-				return(-5000); 
+				return(-1000); 
 		}
 	}
 	else
-		numberofmoves = generatecapturelist(b, movelist, color);
+		moves = generatecapturelist(b, movelist, color);
 
 
-	for (int i = 0; i < numberofmoves && quit[0] == 0; i++)
+	for (int i = 0; i < moves && quit[0] == 0; i++)
 	{
 		comparisons++;
 		domove(b, movelist[i]);
