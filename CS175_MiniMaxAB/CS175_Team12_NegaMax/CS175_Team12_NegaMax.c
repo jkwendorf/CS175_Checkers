@@ -1,65 +1,3 @@
-/*______________________________________________________________________________
-
-----------> name: simple checkers with enhancements
-----------> author: martin fierz
-----------> purpose: platform independent checkers engine
-----------> version: 1.15
-----------> date: 4th february 2011
-----------> description: simplech.c contains a simple but fast checkers engine
-and some routines to interface to checkerboard. simplech.c contains three
-main parts: interface, search and move generation. these parts are
-separated in the code.
-
-board representation: the standard checkers notation is
-
-(white)
-32  31  30  29
-28  27  26  25
-24  23  22  21
-20  19  18  17
-16  15  14  13
-12  11  10   9
-8   7   6   5
-4   3   2   1
-(black)
-
-the internal representation of the board is different, it is a
-array of int with length 46, the checkers board is numbered
-like this:
-
-(white)
-37  38  39  40
-32  33  34  35
-28  29  30  31
-23  24  25  26
-19  20  21  22
-14  15  16  17
-10  11  12  13
-5   6   7   8
-(black)
-
-let's say, you would like to teach the program that it is
-important to keep a back rank guard. you can for instance
-add the following (not very sophisticated) code for this:
-
-if(b[6] & (BLACK|MAN)) eval++;
-if(b[8] & (BLACK|MAN)) eval++;
-if(b[37] & (WHITE|MAN)) eval--;
-if(b[39] & (WHITE|MAN)) eval--;
-
-the evaluation function is seen from the point of view of the
-black player, so you increase the value v if you think the
-position is good for black.
-
-simple checkers is free for anyone to use, in any way, explicitly also
-in commercial products without the need for asking me. Naturally, I would
-appreciate if you tell me that you are using it, and if you acknowledge
-my contribution to your project.
-
-questions, comments, suggestions to:
-
-Martin Fierz
-checkers@fierz.ch
 
 
 /*----------> includes */
@@ -75,9 +13,11 @@ checkers@fierz.ch
 #define KING 8
 #define FREE 16
 #define CHANGECOLOR 3
-#define MAXDEPTH 99
+#define MAXDEPTH 21
 #define MAXMOVES 28
-
+#define KING_WEIGHT 15
+#define PIECE_WEIGHT 10
+#define INFINITY 999999999
 /*----------> compile options  */
 #undef MUTE
 #undef VERBOSE
@@ -119,6 +59,14 @@ functions help, options and about are optional. if you
 do not provide them, CheckerBoard will display a
 MessageBox stating that this option is in fact not an option*/
 
+int comparisons;
+clock_t start;
+int passedMaxTime(double maxTime);
+int locationVal[46] = { 0, 0, 0, 0, 0, 4, 4, 4, 4, 0,
+3, 3, 3, 4, 4, 2, 2, 3, 0, 3,
+1, 2, 4, 4, 2, 1, 3, 0, 3, 2,
+2, 4, 4, 3, 3, 3, 0, 4, 4, 4,
+4, 0, 0, 0, 0, 0 };
 
 
 /* required functions */
@@ -129,11 +77,11 @@ void movetonotation(struct move2 move, char str[80]);
 
 /*----------> part II: search */
 int  checkers(int b[46], int color, double maxtime, char *str);
-int  alphabeta(int b[46], int depth, int alpha, int beta, int color);
-int  firstalphabeta(int b[46], int depth, int alpha, int beta, int color, struct move2 *best);
+int	 masterNegamax(int b[46], int color, double maxtime, clock_t start, char *str, int player);
+int  negamax(int b[46], int depth, int color, double maxtime, clock_t start, int quit[1], int player, int a, int beta);
 void domove(int b[46], struct move2 move);
 void undomove(int b[46], struct move2 move);
-int  evaluation(int b[46], int color);
+
 
 /*----------> part III: move generation */
 int  generatemovelist(int b[46], struct move2 movelist[MAXMOVES], int color);
@@ -144,10 +92,17 @@ void whitemancapture(int b[46], int *n, struct move2 movelist[MAXMOVES], int squ
 void whitekingcapture(int b[46], int *n, struct move2 movelist[MAXMOVES], int square);
 int  testcapture(int b[46], int color);
 
+/*********** Heuristics */
+
+int evaluation(int board[46], int color, int player);
+int numMen(int board[46], int color);
+int numKings(int board[46], int color);
+int totalPieces(int board[46], int color);
+int piecePositionScore(int board[46], int color);
 
 /*----------> globals  */
 #ifdef STATISTICS
-int alphabetas, generatemovelists, evaluations, generatecapturelists, testcaptures;
+int negamaxs, generatemovelists, evaluations, generatecapturelists, testcaptures;
 #endif
 int value[17] = { 0, 0, 0, 0, 0, 1, 256, 0, 0, 16, 4096, 0, 0, 0, 0, 0, 0 };
 int *play;
@@ -193,19 +148,19 @@ int WINAPI enginecommand(char str[256], char reply[256])
 
 	if (strcmp(command, "name") == 0)
 	{
-		sprintf(reply, "Simple Checkers 1.15");
+		sprintf(reply, "CS175 Team 12 - Negamax");
 		return 1;
 	}
 
 	if (strcmp(command, "about") == 0)
 	{
-		sprintf(reply, "Simple Checkers 1.15\n\n2011 by Martin Fierz");
+		sprintf(reply, "Team 12 Negamax");
 		return 1;
 	}
 
 	if (strcmp(command, "help") == 0)
 	{
-		sprintf(reply, "simplechhelp.htm");
+		sprintf(reply, "?");
 		return 1;
 	}
 
@@ -294,6 +249,8 @@ int WINAPI getmove(int b[8][8], int color, double maxtime, char str[255], int *p
 	10  11  12  13
 	5   6   7   8
 	(black)   */
+
+	//Save the actual board positions
 	board[5] = b[0][0]; board[6] = b[2][0]; board[7] = b[4][0]; board[8] = b[6][0];
 	board[10] = b[1][1]; board[11] = b[3][1]; board[12] = b[5][1]; board[13] = b[7][1];
 	board[14] = b[0][2]; board[15] = b[2][2]; board[16] = b[4][2]; board[17] = b[6][2];
@@ -302,15 +259,19 @@ int WINAPI getmove(int b[8][8], int color, double maxtime, char str[255], int *p
 	board[28] = b[1][5]; board[29] = b[3][5]; board[30] = b[5][5]; board[31] = b[7][5];
 	board[32] = b[0][6]; board[33] = b[2][6]; board[34] = b[4][6]; board[35] = b[6][6];
 	board[37] = b[1][7]; board[38] = b[3][7]; board[39] = b[5][7]; board[40] = b[7][7];
+	
+	//Ensure the empty positions are free
 	for (i = 5; i <= 40; i++)
 		if (board[i] == 0) board[i] = FREE;
 	for (i = 9; i <= 36; i += 9)
 		board[i] = OCCUPIED;
 	play = playnow;
 
+	//return all free positions back to empty
 	value = checkers(board, color, maxtime, str);
 	for (i = 5; i <= 40; i++)
 		if (board[i] == FREE) board[i] = 0;
+
 	/* return the board */
 	b[0][0] = board[5]; b[2][0] = board[6]; b[4][0] = board[7]; b[6][0] = board[8];
 	b[1][1] = board[10]; b[3][1] = board[11]; b[5][1] = board[12]; b[7][1] = board[13];
@@ -320,40 +281,19 @@ int WINAPI getmove(int b[8][8], int color, double maxtime, char str[255], int *p
 	b[1][5] = board[28]; b[3][5] = board[29]; b[5][5] = board[30]; b[7][5] = board[31];
 	b[0][6] = board[32]; b[2][6] = board[33]; b[4][6] = board[34]; b[6][6] = board[35];
 	b[1][7] = board[37]; b[3][7] = board[38]; b[5][7] = board[39]; b[7][7] = board[40];
+	
 	if (color == BLACK)
 	{
-		if (value>4000) return WIN;
-		if (value<-4000) return LOSS;
+		if (value>0) return WIN;
+		if (value<0) return LOSS;
 	}
 	if (color == WHITE)
 	{
-		if (value>4000) return LOSS;
-		if (value<-4000) return WIN;
+		if (value>0) return LOSS;
+		if (value<0) return WIN;
 	}
 	return UNKNOWN;
 }
-
-
-void movetonotation(struct move2 move, char str[80])
-{
-	int j, from, to;
-	char c;
-
-	from = move.m[0] % 256;
-	to = move.m[1] % 256;
-	from = from - (from / 9);
-	to = to - (to / 9);
-	from -= 5;
-	to -= 5;
-	j = from % 4; from -= j; j = 3 - j; from += j;
-	j = to % 4; to -= j; j = 3 - j; to += j;
-	from++;
-	to++;
-	c = '-';
-	if (move.n>2) c = 'x';
-	sprintf(str, "%2li%c%2li", from, c, to);
-}
-
 
 
 
@@ -361,199 +301,141 @@ void movetonotation(struct move2 move, char str[80])
 
 
 int  checkers(int b[46], int color, double maxtime, char *str)
-/*----------> purpose: entry point to checkers. find a move on board b for color
----------->          in the time specified by maxtime, write the best move in
----------->          board, returns information on the search in str
-----------> returns 1 if a move is found & executed, 0, if there is no legal
-----------> move in this position.
-----------> version: 1.1
-----------> date: 9th october 98 */
 {
-	int i, numberofmoves;
-	clock_t start;
 	int eval;
-	struct move2 best, lastbest, movelist[MAXMOVES];
-	char str2[255];
-	double secondsused;
-#ifdef STATISTICS
-	alphabetas = 0;
-	generatemovelists = 0;
-	generatecapturelists = 0;
-	evaluations = 0;
-#endif
 
-	/*--------> check if there is only one move */
-	numberofmoves = generatecapturelist(b, movelist, color);
-	if (numberofmoves == 1) {
-		domove(b, movelist[0]);
-		sprintf(str, "forced capture"); return(1);
-	}
-	else if (numberofmoves == 0) {
-		numberofmoves = generatemovelist(b, movelist, color);
-		if (numberofmoves == 1) { domove(b, movelist[0]); sprintf(str, "only move"); return(1); }
-		if (numberofmoves == 0) { sprintf(str, "no legal moves in this position"); return(0); }
-	}
 	start = clock();
-	eval = firstalphabeta(b, 1, -10000, 10000, color, &best);
+	eval = masterNegamax(b, color, maxtime, start, str, color);
 
-	for (i = 2; i <= MAXDEPTH; i++)
-	{
-		lastbest = best;
-		eval = firstalphabeta(b, i, -10000, 10000, color, &best);
-		secondsused = (double)(clock() - start) / CLK_TCK;
-		movetonotation(best, str2);
-#ifndef MUTE
-		sprintf(str, "best:%s time %2.2fs, depth %2li, value %4li", str2, secondsused, i, eval);
-#ifdef STATISTICS
-		sprintf(str2, "  nodes %li, gms %li, gcs %li, evals %li",
-			alphabetas, generatemovelists, generatecapturelists,
-			evaluations);
-		strcat(str, str2);
-#endif
-#endif
-		if (*play) break;
-		if (eval == 5000) break;
-		if (eval == -5000) break;
-		if (secondsused > maxtime) break;
-	}
-	i--;
-	if (*play)
-		movetonotation(lastbest, str2);
-	else
-		movetonotation(best, str2);
-
-	sprintf(str, "best:%s time %2.2f, depth %2li, value %4li  nodes %li, gms %li, gcs %li, evals %li", str2, secondsused, i, eval, alphabetas, generatemovelists, generatecapturelists, evaluations);
-
-	if (*play)
-		domove(b, lastbest);
-	else
-		domove(b, best);
 	return eval;
 }
 
 
-
-int firstalphabeta(int b[46], int depth, int alpha, int beta, int color, struct move2 *best)
-/*----------> purpose: search the game tree and find the best move.
-----------> version: 1.0
-----------> date: 25th october 97 */
+int masterNegamax(int b[46], int color, double maxtime, clock_t start, char *str,int player)
 {
-	int i;
-	int value;
-	int numberofmoves;
-	int capture;
 	struct move2 movelist[MAXMOVES];
-
-#ifdef STATISTICS
-	alphabetas++;
-#endif
-	if (*play) return 0;
-	/*----------> test if captures are possible */
-	capture = testcapture(b, color);
-
-	/*----------> recursion termination if no captures and depth=0*/
-	if (depth == 0)
+	struct move2 best;
+	int  capture, eval = 0, numberofmoves, value = 0, bestvalue = -1*INFINITY;
+	int quitEarly[1] = { 0 };
+	
+	for (int depth = 1; depth < MAXDEPTH && quitEarly[0] == 0; depth++)
 	{
+		//test if captures are availiable
+		capture = testcapture(b, color);
+		
+		//generate all possible moves in the position
 		if (capture == 0)
-			return(evaluation(b, color));
+		{
+			numberofmoves = generatemovelist(b, movelist, color);
+			// if no moves, lose
+			if (numberofmoves == 0) 
+			{ 
+				if (color == BLACK) 
+					return(-5000); 
+				else 
+					return(5000);
+			}
+		}
 		else
-			depth = 1;
-	}
+			numberofmoves = generatecapturelist(b, movelist, color);
 
-	/*----------> generate all possible moves in the position */
-	if (capture == 0)
-	{
-		numberofmoves = generatemovelist(b, movelist, color);
-		/*----------> if there are no possible moves, we lose: */
-		if (numberofmoves == 0)  { if (color == BLACK) return(-5000); else return(5000); }
-	}
-	else
-		numberofmoves = generatecapturelist(b, movelist, color);
-
-	/*----------> for all moves: execute the move, search tree, undo move. */
-	for (i = 0; i<numberofmoves; i++)
-	{
-		domove(b, movelist[i]);
-
-		value = alphabeta(b, depth - 1, alpha, beta, (color^CHANGECOLOR));
-
-		undomove(b, movelist[i]);
-		if (color == BLACK)
+		if (numberofmoves == 1)
 		{
-			if (value >= beta) return(value);
-			if (value>alpha) { alpha = value; *best = movelist[i]; }
+			sprintf(str, "Forced Move");
+			best = movelist[0];
+			quitEarly[0] = 1;
 		}
-		if (color == WHITE)
+
+
+		for (int i = 0; i < numberofmoves && quitEarly[0] == 0; i++)
 		{
-			if (value <= alpha) return(value);
-			if (value<beta)   { beta = value; *best = movelist[i]; }
+			//do move
+			domove(b, movelist[i]);
+			//get value of move
+			value = -negamax(b, depth - 1, color, maxtime, start, quitEarly, player, -INFINITY, INFINITY);
+			//undo move
+			undomove(b, movelist[i]);
+
+			if (value > bestvalue)
+			{
+				bestvalue = value;
+				best = movelist[i];
+			}
+			
+
+			comparisons++;
+			char printColor[5];
+			if (color == WHITE)
+				sprintf(printColor, "White");
+			else
+				sprintf(printColor, "Black");
+			sprintf(str, "MASTER %s - Comparisons: %i Depth: %i Move Count: %i Current Move: %i Value: %i BestVal: %i", printColor, comparisons, depth, numberofmoves, (i + 1), value, bestvalue);
 		}
 	}
-	if (color == BLACK)
-		return(alpha);
-	return(beta);
+
+	domove(b, best);
+
+	return eval;
 }
 
-int alphabeta(int b[46], int depth, int alpha, int beta, int color)
-/*----------> purpose: search the game tree and find the best move.
-----------> version: 1.0
-----------> date: 24th october 97 */
+int negamax(int b[46], int depth, int color, double maxtime, clock_t start, int quit[1],int player, int a, int beta)
 {
-	int i;
-	int value;
-	int capture;
-	int numberofmoves;
 	struct move2 movelist[MAXMOVES];
+	int  opponent, capture, numberofmoves, value = -1 * INFINITY;
+	int localalpha = a;
 
-#ifdef STATISTICS
-	alphabetas++;
-#endif
-	if (*play) return 0;
-	/*----------> test if captures are possible */
+	if (color == BLACK)
+		opponent = WHITE;
+	else
+		opponent = BLACK;
+
 	capture = testcapture(b, color);
 
-	/*----------> recursion termination if no captures and depth=0*/
 	if (depth == 0)
 	{
 		if (capture == 0)
-			return(evaluation(b, color));
+			return(evaluation(b, color, player));
 		else
 			depth = 1;
-	}
+	};
 
-	/*----------> generate all possible moves in the position */
+	// generate all possible moves in the position
 	if (capture == 0)
 	{
 		numberofmoves = generatemovelist(b, movelist, color);
-		/*----------> if there are no possible moves, we lose: */
-		if (numberofmoves == 0)  { if (color == BLACK) return(-5000); else return(5000); }
+		//if no possible moves, lose
+		if (numberofmoves == 0)  
+		{	if (opponent == BLACK) 
+				return(5000);
+			else 
+				return(-5000); 
+		}
 	}
 	else
 		numberofmoves = generatecapturelist(b, movelist, color);
 
-	/*----------> for all moves: execute the move, search tree, undo move. */
-	for (i = 0; i<numberofmoves; i++)
+
+	for (int i = 0; i < numberofmoves && quit[0] == 0; i++)
 	{
+		comparisons++;
 		domove(b, movelist[i]);
-
-		value = alphabeta(b, depth - 1, alpha, beta, color^CHANGECOLOR);
-
+		value = -negamax(b, depth - 1, opponent, maxtime, start, quit,player, -beta, -localalpha);
 		undomove(b, movelist[i]);
 
-		if (color == BLACK)
+		if (value >= beta)
+			return value;
+		if (value >  localalpha)
+			localalpha = value;
+
+
+		if (passedMaxTime(maxtime) == 1)
 		{
-			if (value >= beta) return(value);
-			if (value>alpha) alpha = value;
-		}
-		if (color == WHITE)
-		{
-			if (value <= alpha) return(value);
-			if (value<beta)   beta = value;
+			quit[0] = 1;
+			return localalpha;
 		}
 	}
-	if (color == BLACK)
-		return(alpha);
-	return(beta);
+
+	return localalpha;
 }
 
 void domove(int b[46], struct move2 move)
@@ -586,286 +468,6 @@ void undomove(int b[46], struct move2 move)
 		before = ((move.m[i] >> 8) % 256);
 		b[square] = before;
 	}
-}
-
-int evaluation(int b[46], int color)
-/*----------> purpose:
-----------> version: 1.1
-----------> date: 18th april 98 */
-{
-	int i, j;
-	int eval;
-	int v1, v2;
-	int nbm, nbk, nwm, nwk;
-	int nbmc = 0, nbkc = 0, nwmc = 0, nwkc = 0;
-	int nbme = 0, nbke = 0, nwme = 0, nwke = 0;
-	int code = 0;
-	static int value[17] = { 0, 0, 0, 0, 0, 1, 256, 0, 0, 16, 4096, 0, 0, 0, 0, 0, 0 };
-	static int edge[14] = { 5, 6, 7, 8, 13, 14, 22, 23, 31, 32, 37, 38, 39, 40 };
-	static int center[8] = { 15, 16, 20, 21, 24, 25, 29, 30 };
-	static int row[41] = { 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 1, 1, 1, 1, 2, 2, 2, 2, 0, 3, 3, 3, 3, 4, 4, 4, 4, 0, 5, 5, 5, 5, 6, 6, 6, 6, 0, 7, 7, 7, 7 };
-	static int safeedge[4] = { 8, 13, 32, 37 };
-
-	int tempo = 0;
-	int nm, nk;
-
-	const int turn = 2;   //color to move gets +turn
-	const int brv = 3;    //multiplier for back rank
-	const int kcv = 5;    //multiplier for kings in center
-	const int mcv = 1;    //multiplier for men in center
-
-	const int mev = 1;    //multiplier for men on edge
-	const int kev = 5;    //multiplier for kings on edge
-	const int cramp = 5;  //multiplier for cramp
-
-	const int opening = -2; // multipliers for tempo
-	const int midgame = -1;
-	const int endgame = 2;
-	const int intactdoublecorner = 3;
-
-
-	int backrank;
-
-	int stonesinsystem = 0;
-
-#ifdef STATISTICS
-	evaluations++;
-#endif
-
-
-	for (i = 5; i <= 40; i++)
-		code += value[b[i]];
-
-	nwm = code % 16;
-	nwk = (code >> 4) % 16;
-	nbm = (code >> 8) % 16;
-	nbk = (code >> 12) % 16;
-
-
-	v1 = 100 * nbm + 130 * nbk;
-	v2 = 100 * nwm + 130 * nwk;
-
-	eval = v1 - v2;                       /*material values*/
-	eval += (250 * (v1 - v2)) / (v1 + v2);      /*favor exchanges if in material plus*/
-
-	nm = nbm + nwm;
-	nk = nbk + nwk;
-	/*--------- fine evaluation below -------------*/
-
-	if (color == BLACK) eval += turn;
-	else eval -= turn;
-	/*    (white)
-	37  38  39  40
-	32  33  34  35
-	28  29  30  31
-	23  24  25  26
-	19  20  21  22
-	14  15  16  17
-	10  11  12  13
-	5   6   7   8
-	(black)   */
-	/* cramp */
-	if (b[23] == (BLACK | MAN) && b[28] == (WHITE | MAN)) eval += cramp;
-	if (b[22] == (WHITE | MAN) && b[17] == (BLACK | MAN)) eval -= cramp;
-
-	/* back rank guard */
-
-	code = 0;
-	if (b[5] & MAN) code++;
-	if (b[6] & MAN) code += 2;
-	if (b[7] & MAN) code += 4;
-	if (b[8] & MAN) code += 8;
-	switch (code)
-	{
-	case 0: code = 0; break;
-	case 1: code = -1; break;
-	case 2: code = 1; break;
-	case 3: code = 0; break;
-	case 4: code = 1; break;
-	case 5: code = 1; break;
-	case 6: code = 2; break;
-	case 7: code = 1; break;
-	case 8: code = 1; break;
-	case 9: code = 0; break;
-	case 10: code = 7; break;
-	case 11: code = 4; break;
-	case 12: code = 2; break;
-	case 13: code = 2; break;
-	case 14: code = 9; break;
-	case 15: code = 8; break;
-	}
-	backrank = code;
-
-
-	code = 0;
-	if (b[37] & MAN) code += 8;
-	if (b[38] & MAN) code += 4;
-	if (b[39] & MAN) code += 2;
-	if (b[40] & MAN) code++;
-	switch (code)
-	{
-	case 0: code = 0; break;
-	case 1: code = -1; break;
-	case 2: code = 1; break;
-	case 3: code = 0; break;
-	case 4: code = 1; break;
-	case 5: code = 1; break;
-	case 6: code = 2; break;
-	case 7: code = 1; break;
-	case 8: code = 1; break;
-	case 9: code = 0; break;
-	case 10: code = 7; break;
-	case 11: code = 4; break;
-	case 12: code = 2; break;
-	case 13: code = 2; break;
-	case 14: code = 9; break;
-	case 15: code = 8; break;
-	}
-	backrank -= code;
-	eval += brv*backrank;
-
-
-	/* intact double corner */
-	if (b[8] == (BLACK | MAN))
-	{
-		if (b[12] == (BLACK | MAN) || b[13] == (BLACK | MAN))
-			eval += intactdoublecorner;
-	}
-
-	if (b[37] == (WHITE | MAN))
-	{
-		if (b[32] == (WHITE | MAN) || b[33] == (WHITE | MAN))
-			eval -= intactdoublecorner;
-	}
-	/*    (white)
-	37  38  39  40
-	32  33  34  35
-	28  29  30  31
-	23  24  25  26
-	19  20  21  22
-	14  15  16  17
-	10  11  12  13
-	5   6   7   8
-	(black)   */
-
-	/* center control */
-	for (i = 0; i<8; i++)
-	{
-		if (b[center[i]] != FREE)
-		{
-			if (b[center[i]] == (BLACK | MAN)) nbmc++;
-			if (b[center[i]] == (BLACK | KING)) nbkc++;
-			if (b[center[i]] == (WHITE | MAN)) nwmc++;
-			if (b[center[i]] == (WHITE | KING)) nwkc++;
-		}
-	}
-	eval += (nbmc - nwmc)*mcv;
-	eval += (nbkc - nwkc)*kcv;
-
-	/*edge*/
-	for (i = 0; i<14; i++)
-	{
-		if (b[edge[i]] != FREE)
-		{
-			if (b[edge[i]] == (BLACK | MAN)) nbme++;
-			if (b[edge[i]] == (BLACK | KING)) nbke++;
-			if (b[edge[i]] == (WHITE | MAN)) nwme++;
-			if (b[edge[i]] == (WHITE | KING)) nwke++;
-		}
-	}
-	eval -= (nbme - nwme)*mev;
-	eval -= (nbke - nwke)*kev;
-
-
-
-	/* tempo */
-	for (i = 5; i<41; i++)
-	{
-		if (b[i] == (BLACK | MAN))
-			tempo += row[i];
-		if (b[i] == (WHITE | MAN))
-			tempo -= 7 - row[i];
-	}
-
-	if (nm >= 16) eval += opening*tempo;
-	if ((nm <= 15) && (nm >= 12)) eval += midgame*tempo;
-	if (nm<9) eval += endgame*tempo;
-
-
-
-	for (i = 0; i<4; i++)
-	{
-		if (nbk + nbm>nwk + nwm && nwk<3)
-		{
-			if (b[safeedge[i]] == (WHITE | KING))
-				eval -= 15;
-		}
-		if (nwk + nwm>nbk + nbm && nbk<3)
-		{
-			if (b[safeedge[i]] == (BLACK | KING))
-				eval += 15;
-		}
-	}
-
-
-
-
-
-	/* the move */
-	if (nwm + nwk - nbk - nbm == 0)
-	{
-		if (color == BLACK)
-		{
-			for (i = 5; i <= 8; i++)
-			{
-				for (j = 0; j<4; j++)
-				{
-					if (b[i + 9 * j] != FREE) stonesinsystem++;
-				}
-			}
-			if (stonesinsystem % 2)
-			{
-				if (nm + nk <= 12) eval++;
-				if (nm + nk <= 10) eval++;
-				if (nm + nk <= 8) eval += 2;
-				if (nm + nk <= 6) eval += 2;
-			}
-			else
-			{
-				if (nm + nk <= 12) eval--;
-				if (nm + nk <= 10) eval--;
-				if (nm + nk <= 8) eval -= 2;
-				if (nm + nk <= 6) eval -= 2;
-			}
-		}
-		else
-		{
-			for (i = 10; i <= 13; i++)
-			{
-				for (j = 0; j<4; j++)
-				{
-					if (b[i + 9 * j] != FREE) stonesinsystem++;
-				}
-			}
-			if ((stonesinsystem % 2) == 0)
-			{
-				if (nm + nk <= 12) eval++;
-				if (nm + nk <= 10) eval++;
-				if (nm + nk <= 8) eval += 2;
-				if (nm + nk <= 6) eval += 2;
-			}
-			else
-			{
-				if (nm + nk <= 12) eval--;
-				if (nm + nk <= 10) eval--;
-				if (nm + nk <= 8) eval -= 2;
-				if (nm + nk <= 6) eval -= 2;
-			}
-		}
-	}
-
-
-	return(eval);
 }
 
 
@@ -1801,3 +1403,78 @@ int  testcapture(int b[46], int color)
 	}
 	return(0);
 }
+
+/******************** Heuristics */
+
+int numMen(int board[46], int color)
+{
+	int count = 0;
+	for (int i = 0; i < 46; i++)
+	{
+		if ((int)(board[i] ^ MAN) == color)
+			count++;
+	}
+
+	return count;
+}
+
+int numKings(int board[46], int color)
+{
+	int count = 0;
+	for (int i = 0; i < 46; i++)
+	{
+		if ((int)(board[i] ^ KING) == color)
+		{
+			count++;
+		}
+	}
+	return count;
+}
+
+int totalPieces(int board[46], int color)
+{
+	return numMen(board, color) + numKings(board, color);
+}
+
+int evaluation(int board[46], int color, int player)
+{
+	int blackPieces = totalPieces(board, BLACK);
+	int whitePieces = totalPieces(board, WHITE);
+	int moveVal = ((numKings(board, BLACK)*KING_WEIGHT) + (blackPieces*PIECE_WEIGHT) + piecePositionScore(board, BLACK)) - ((numKings(board, WHITE)*KING_WEIGHT) + (whitePieces*PIECE_WEIGHT) + piecePositionScore(board, WHITE));
+
+	if (moveVal < 0)
+	{
+		if (color == player)
+			moveVal = -1 * moveVal;
+	}
+	else if (moveVal >= 0)
+	{
+		if (color != player)
+			moveVal = -1 * moveVal;
+	}
+
+	return moveVal;
+}
+
+int piecePositionScore(int board[46], int color)
+{
+	int score = 0;
+	for (int i = 0; i < 46; i++)
+	{
+		if ((int)(board[i] ^ color) == KING || (int)(board[i] ^ color) == MAN)
+		{
+			score += locationVal[i];
+		}
+	}
+
+	return score;
+}
+
+int passedMaxTime(double maxTime)
+{
+	double currentTime = (double)((clock() - start) / CLK_TCK);
+	if (currentTime > maxTime)
+		return 1;
+	return 0;
+}
+
